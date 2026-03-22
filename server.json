@@ -1,0 +1,34 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "eu.ansvar/italian-data-protection-mcp",
+  "description": "Query Garante decisions, sanctions, and guidance on data protection enforcement in Italy",
+  "repository": {
+    "url": "https://github.com/Ansvar-Systems/italian-data-protection-mcp",
+    "source": "github"
+  },
+  "homepage": "https://ansvar.eu",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "keywords": [
+    "garante",
+    "italian-data-protection",
+    "privacy",
+    "gdpr",
+    "italy",
+    "data-protection",
+    "sanctions",
+    "compliance",
+    "mcp",
+    "ansvar"
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@ansvar/italian-data-protection-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
