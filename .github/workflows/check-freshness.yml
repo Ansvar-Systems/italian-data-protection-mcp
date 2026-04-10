@@ -1,0 +1,74 @@
+name: Check Data Freshness
+
+on:
+  schedule:
+    # Run weekly on Mondays at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  check-freshness:
+    name: Check Garante data freshness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download latest database
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE=$(gh release view latest --json assets --jq '.assets[] | select(.name | endswith(".db.gz")) | .url' 2>/dev/null || true)
+          if [ -n "$RELEASE" ]; then
+            mkdir -p data
+            curl -L -H "Authorization: Bearer $GH_TOKEN" "$RELEASE" -o data/garante.db.gz
+            gunzip data/garante.db.gz
+            echo "Database downloaded and extracted."
+          else
+            echo "No release database found — skipping freshness check."
+            exit 0
+          fi
+
+      - name: Check freshness
+        id: freshness
+        run: |
+          node --input-type=module << 'EOF'
+          import Database from "better-sqlite3";
+          const db = new Database("data/garante.db");
+          const decRow = db.prepare("SELECT MAX(date) as max_date FROM decisions").get();
+          const glRow = db.prepare("SELECT MAX(date) as max_date FROM guidelines").get();
+          console.log("Most recent decision:", decRow?.max_date ?? "none");
+          console.log("Most recent guideline:", glRow?.max_date ?? "none");
+
+          const today = new Date();
+          const decDate = decRow?.max_date ? new Date(decRow.max_date) : null;
+          const diffDays = decDate ? Math.floor((today - decDate) / (1000 * 60 * 60 * 24)) : null;
+          if (diffDays !== null && diffDays > 90) {
+            console.warn(`WARNING: Decision data is ${diffDays} days old — consider running the ingest workflow.`);
+            process.exit(1);
+          }
+          console.log("Data freshness OK.");
+          EOF
+
+      - name: Open issue on stale data
+        if: failure() && steps.freshness.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "Data freshness alert: Garante database may be stale",
+              body: "The weekly freshness check detected that the Garante database has not been updated in over 90 days. Please run the ingest workflow or investigate the data source.",
+              labels: ["data-quality", "automated"]
+            });

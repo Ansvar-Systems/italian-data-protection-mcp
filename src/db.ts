@@ -261,3 +261,24 @@ export function listTopics(): Topic[] {
     .prepare("SELECT * FROM topics ORDER BY id")
     .all() as Topic[];
 }
+
+// --- Data age query -----------------------------------------------------------
+
+export interface DataAge {
+  decisions: string | null;
+  guidelines: string | null;
+}
+
+export function getDataAge(): DataAge {
+  const db = getDb();
+  const decRow = db
+    .prepare("SELECT MAX(date) as max_date FROM decisions")
+    .get() as { max_date: string | null } | undefined;
+  const glRow = db
+    .prepare("SELECT MAX(date) as max_date FROM guidelines")
+    .get() as { max_date: string | null } | undefined;
+  return {
+    decisions: decRow?.max_date ?? null,
+    guidelines: glRow?.max_date ?? null,
+  };
+}
