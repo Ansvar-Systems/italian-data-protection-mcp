@@ -29,13 +29,16 @@ import {
   searchGuidelines,
   getGuideline,
   listTopics,
+  getDataAge,
 } from "./db.js";
+import { buildCitation } from "./utils/citation.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PORT = parseInt(process.env["PORT"] ?? "3000", 10);
 const SERVER_NAME = "italian-data-protection-mcp";
+const GARANTE_URL = "https://www.garanteprivacy.it/";
 
 let pkgVersion = "0.1.0";
 try {
@@ -120,6 +123,16 @@ const TOOLS = [
     description: "Return metadata about this MCP server: version, data source, coverage, and tool list.",
     inputSchema: { type: "object" as const, properties: {}, required: [] },
   },
+  {
+    name: "it_dp_list_sources",
+    description: "List the data sources covered by this MCP server, including authority names, official URLs, and coverage details.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+  },
+  {
+    name: "it_dp_check_data_freshness",
+    description: "Check when the data in this MCP was last updated. Returns the most recent decision and guideline dates in the database.",
+    inputSchema: { type: "object" as const, properties: {}, required: [] },
+  },
 ];
 
 // --- Zod schemas -------------------------------------------------------------
@@ -161,15 +174,27 @@ function createMcpServer(): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
 
+    function buildMeta() {
+      return {
+        disclaimer:
+          "Data sourced from Garante per la protezione dei dati personali. For informational purposes only. Not legal advice.",
+        data_age: getDataAge(),
+        copyright: "© Garante per la protezione dei dati personali",
+        source_url: GARANTE_URL,
+      };
+    }
+
     function textContent(data: unknown) {
       return {
         content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     }
 
-    function errorContent(message: string) {
+    function errorContent(message: string, errorType?: string) {
+      const body: Record<string, string> = { error: message };
+      if (errorType) body["_error_type"] = errorType;
       return {
-        content: [{ type: "text" as const, text: message }],
+        content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }],
         isError: true as const,
       };
     }
@@ -184,16 +209,37 @@ function createMcpServer(): Server {
             topic: parsed.topic,
             limit: parsed.limit,
           });
-          return textContent({ results, count: results.length });
+          const resultsWithCitation = results.map((d) => ({
+            ...d,
+            _citation: buildCitation(
+              d.reference,
+              d.title,
+              "it_dp_get_decision",
+              { reference: d.reference },
+              GARANTE_URL,
+            ),
+          }));
+          return textContent({ results: resultsWithCitation, count: results.length, _meta: buildMeta() });
         }
 
         case "it_dp_get_decision": {
           const parsed = GetDecisionArgs.parse(args);
           const decision = getDecision(parsed.reference);
           if (!decision) {
-            return errorContent(`Decision not found: ${parsed.reference}`);
+            return errorContent(`Decision not found: ${parsed.reference}`, "not_found");
           }
-          return textContent(decision);
+          const dec = decision as Record<string, unknown>;
+          return textContent({
+            ...decision,
+            _citation: buildCitation(
+              String(dec.reference ?? parsed.reference),
+              String(dec.title ?? dec.reference ?? parsed.reference),
+              "it_dp_get_decision",
+              { reference: parsed.reference },
+              GARANTE_URL,
+            ),
+            _meta: buildMeta(),
+          });
         }
 
         case "it_dp_search_guidelines": {
@@ -204,21 +250,42 @@ function createMcpServer(): Server {
             topic: parsed.topic,
             limit: parsed.limit,
           });
-          return textContent({ results, count: results.length });
+          const resultsWithCitation = results.map((g) => ({
+            ...g,
+            _citation: buildCitation(
+              String(g.reference ?? g.id),
+              g.title,
+              "it_dp_get_guideline",
+              { id: String(g.id) },
+              GARANTE_URL,
+            ),
+          }));
+          return textContent({ results: resultsWithCitation, count: results.length, _meta: buildMeta() });
         }
 
         case "it_dp_get_guideline": {
           const parsed = GetGuidelineArgs.parse(args);
           const guideline = getGuideline(parsed.id);
           if (!guideline) {
-            return errorContent(`Guideline not found: id=${parsed.id}`);
+            return errorContent(`Guideline not found: id=${parsed.id}`, "not_found");
           }
-          return textContent(guideline);
+          const gl = guideline as Record<string, unknown>;
+          return textContent({
+            ...guideline,
+            _citation: buildCitation(
+              String(gl.reference ?? gl.id ?? parsed.id),
+              String(gl.title ?? gl.reference ?? `Guideline ${parsed.id}`),
+              "it_dp_get_guideline",
+              { id: String(parsed.id) },
+              GARANTE_URL,
+            ),
+            _meta: buildMeta(),
+          });
         }
 
         case "it_dp_list_topics": {
           const topics = listTopics();
-          return textContent({ topics, count: topics.length });
+          return textContent({ topics, count: topics.length, _meta: buildMeta() });
         }
 
         case "it_dp_about": {
@@ -227,8 +294,48 @@ function createMcpServer(): Server {
             version: pkgVersion,
             description:
               "Garante per la protezione dei dati personali MCP server. Provides access to Italian data protection authority decisions, sanctions, and official guidance documents.",
-            data_source: "Garante per la protezione dei dati personali (https://www.garanteprivacy.it/)",
+            data_source: `Garante per la protezione dei dati personali (${GARANTE_URL})`,
+            coverage: {
+              decisions: "Garante sanzioni, provvedimenti, and ordinanze-ingiunzione",
+              guidelines: "Garante linee guida, provvedimenti generali, and FAQ",
+              topics: "Cookie, videosorveglianza, profilazione, telemarketing, dati sanitari, diritto oblio, trasferimento dati, valutazione impatto, trattamento automatizzato",
+            },
             tools: TOOLS.map((t) => ({ name: t.name, description: t.description })),
+            _meta: buildMeta(),
+          });
+        }
+
+        case "it_dp_list_sources": {
+          return textContent({
+            sources: [
+              {
+                authority: "Garante per la protezione dei dati personali",
+                country: "Italy",
+                official_url: GARANTE_URL,
+                covers: [
+                  "decisions",
+                  "sanctions (sanzioni)",
+                  "prescriptions (provvedimenti)",
+                  "ordinances (ordinanze-ingiunzione)",
+                  "guidelines (linee guida)",
+                  "general provisions (provvedimenti generali)",
+                  "FAQ",
+                ],
+                language: "Italian (primary), some documents in English",
+              },
+            ],
+            _meta: buildMeta(),
+          });
+        }
+
+        case "it_dp_check_data_freshness": {
+          const dataAge = getDataAge();
+          return textContent({
+            data_age: dataAge,
+            source: "Garante per la protezione dei dati personali",
+            source_url: GARANTE_URL,
+            checked_at: new Date().toISOString(),
+            _meta: buildMeta(),
           });
         }
 

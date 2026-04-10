@@ -1,0 +1,67 @@
+name: Ingest Garante Data
+
+on:
+  schedule:
+    # Run monthly on the 1st at 03:00 UTC
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (do not publish release)"
+        type: boolean
+        default: false
+
+jobs:
+  ingest:
+    name: Ingest Garante decisions and guidelines
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ingest script
+        run: npx tsx scripts/ingest-garante.ts
+        env:
+          GARANTE_DB_PATH: data/garante.db
+
+      - name: Compress database
+        run: |
+          gzip -k -f data/garante.db
+          ls -lh data/garante.db.gz
+
+      - name: Publish database as GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="db-$(date -u +%Y%m%d)"
+          gh release create "$TAG" \
+            --title "Garante database $TAG" \
+            --notes "Automated ingest of Garante decisions and guidelines." \
+            --prerelease \
+            data/garante.db.gz
+
+      - name: Summary
+        run: |
+          node --input-type=module << 'EOF'
+          import Database from "better-sqlite3";
+          const db = new Database("data/garante.db");
+          const dec = db.prepare("SELECT COUNT(*) as n FROM decisions").get();
+          const gl  = db.prepare("SELECT COUNT(*) as n FROM guidelines").get();
+          const decDate = db.prepare("SELECT MAX(date) as d FROM decisions").get();
+          const glDate  = db.prepare("SELECT MAX(date) as d FROM guidelines").get();
+          console.log(`Decisions:  ${dec.n} (latest: ${decDate.d})`);
+          console.log(`Guidelines: ${gl.n} (latest: ${glDate.d})`);
+          EOF

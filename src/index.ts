@@ -25,6 +25,7 @@ import {
   searchGuidelines,
   getGuideline,
   listTopics,
+  getDataAge,
 } from "./db.js";
 import { buildCitation } from "./utils/citation.js";
 
@@ -42,6 +43,8 @@ try {
 }
 
 const SERVER_NAME = "italian-data-protection-mcp";
+
+const GARANTE_URL = "https://www.garanteprivacy.it/";
 
 // --- Tool definitions ---------------------------------------------------------
 
@@ -151,6 +154,24 @@ const TOOLS = [
       required: [],
     },
   },
+  {
+    name: "it_dp_list_sources",
+    description: "List the data sources covered by this MCP server, including authority names, official URLs, and coverage details.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "it_dp_check_data_freshness",
+    description: "Check when the data in this MCP was last updated. Returns the most recent decision and guideline dates in the database.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // --- Zod schemas for argument validation --------------------------------------
@@ -177,7 +198,17 @@ const GetGuidelineArgs = z.object({
   id: z.number().int().positive(),
 });
 
-// --- Helper ------------------------------------------------------------------
+// --- Helpers ------------------------------------------------------------------
+
+function buildMeta() {
+  return {
+    disclaimer:
+      "Data sourced from Garante per la protezione dei dati personali. For informational purposes only. Not legal advice.",
+    data_age: getDataAge(),
+    copyright: "© Garante per la protezione dei dati personali",
+    source_url: GARANTE_URL,
+  };
+}
 
 function textContent(data: unknown) {
   return {
@@ -187,9 +218,11 @@ function textContent(data: unknown) {
   };
 }
 
-function errorContent(message: string) {
+function errorContent(message: string, errorType?: string) {
+  const body: Record<string, string> = { error: message };
+  if (errorType) body["_error_type"] = errorType;
   return {
-    content: [{ type: "text" as const, text: message }],
+    content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }],
     isError: true as const,
   };
 }
@@ -218,14 +251,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           topic: parsed.topic,
           limit: parsed.limit,
         });
-        return textContent({ results, count: results.length });
+        const resultsWithCitation = results.map((d) => ({
+          ...d,
+          _citation: buildCitation(
+            d.reference,
+            d.title,
+            "it_dp_get_decision",
+            { reference: d.reference },
+            GARANTE_URL,
+          ),
+        }));
+        return textContent({ results: resultsWithCitation, count: results.length, _meta: buildMeta() });
       }
 
       case "it_dp_get_decision": {
         const parsed = GetDecisionArgs.parse(args);
         const decision = getDecision(parsed.reference);
         if (!decision) {
-          return errorContent(`Decision not found: ${parsed.reference}`);
+          return errorContent(`Decision not found: ${parsed.reference}`, "not_found");
         }
         const dec = decision as Record<string, unknown>;
         return textContent({
@@ -235,7 +278,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             String(dec.title ?? dec.reference ?? parsed.reference),
             "it_dp_get_decision",
             { reference: parsed.reference },
+            GARANTE_URL,
           ),
+          _meta: buildMeta(),
         });
       }
 
@@ -247,14 +292,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           topic: parsed.topic,
           limit: parsed.limit,
         });
-        return textContent({ results, count: results.length });
+        const resultsWithCitation = results.map((g) => ({
+          ...g,
+          _citation: buildCitation(
+            String(g.reference ?? g.id),
+            g.title,
+            "it_dp_get_guideline",
+            { id: String(g.id) },
+            GARANTE_URL,
+          ),
+        }));
+        return textContent({ results: resultsWithCitation, count: results.length, _meta: buildMeta() });
       }
 
       case "it_dp_get_guideline": {
         const parsed = GetGuidelineArgs.parse(args);
         const guideline = getGuideline(parsed.id);
         if (!guideline) {
-          return errorContent(`Guideline not found: id=${parsed.id}`);
+          return errorContent(`Guideline not found: id=${parsed.id}`, "not_found");
         }
         const gl = guideline as Record<string, unknown>;
         return textContent({
@@ -264,13 +319,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             String(gl.title ?? gl.reference ?? `Guideline ${parsed.id}`),
             "it_dp_get_guideline",
             { id: String(parsed.id) },
+            GARANTE_URL,
           ),
+          _meta: buildMeta(),
         });
       }
 
       case "it_dp_list_topics": {
         const topics = listTopics();
-        return textContent({ topics, count: topics.length });
+        return textContent({ topics, count: topics.length, _meta: buildMeta() });
       }
 
       case "it_dp_about": {
@@ -279,13 +336,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           version: pkgVersion,
           description:
             "Garante per la protezione dei dati personali MCP server. Provides access to Italian data protection authority decisions, sanctions, prescriptions, and official guidance documents including linee guida and provvedimenti generali.",
-          data_source: "Garante per la protezione dei dati personali (https://www.garanteprivacy.it/)",
+          data_source: `Garante per la protezione dei dati personali (${GARANTE_URL})`,
           coverage: {
             decisions: "Garante sanzioni, provvedimenti, and ordinanze-ingiunzione",
             guidelines: "Garante linee guida, provvedimenti generali, and FAQ",
             topics: "Cookie, videosorveglianza, profilazione, telemarketing, dati sanitari, diritto oblio, trasferimento dati, valutazione impatto, trattamento automatizzato",
           },
           tools: TOOLS.map((t) => ({ name: t.name, description: t.description })),
+          _meta: buildMeta(),
+        });
+      }
+
+      case "it_dp_list_sources": {
+        return textContent({
+          sources: [
+            {
+              authority: "Garante per la protezione dei dati personali",
+              country: "Italy",
+              official_url: GARANTE_URL,
+              covers: [
+                "decisions",
+                "sanctions (sanzioni)",
+                "prescriptions (provvedimenti)",
+                "ordinances (ordinanze-ingiunzione)",
+                "guidelines (linee guida)",
+                "general provisions (provvedimenti generali)",
+                "FAQ",
+              ],
+              language: "Italian (primary), some documents in English",
+            },
+          ],
+          _meta: buildMeta(),
+        });
+      }
+
+      case "it_dp_check_data_freshness": {
+        const dataAge = getDataAge();
+        return textContent({
+          data_age: dataAge,
+          source: "Garante per la protezione dei dati personali",
+          source_url: GARANTE_URL,
+          checked_at: new Date().toISOString(),
+          _meta: buildMeta(),
         });
       }
 

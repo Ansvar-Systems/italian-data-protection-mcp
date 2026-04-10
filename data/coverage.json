@@ -1,0 +1,20 @@
+{
+  "authority": "Garante per la protezione dei dati personali",
+  "country": "Italy",
+  "official_url": "https://www.garanteprivacy.it/",
+  "decision_types": ["sanzione", "provvedimento", "ordinanza", "parere"],
+  "guideline_types": ["linee_guida", "provvedimento_generale", "FAQ", "parere"],
+  "topics": [
+    { "id": "cookie", "name_it": "Cookie e tracciamento", "name_en": "Cookies and tracking" },
+    { "id": "videosorveglianza", "name_it": "Videosorveglianza", "name_en": "Video surveillance" },
+    { "id": "profilazione", "name_it": "Profilazione", "name_en": "Profiling" },
+    { "id": "telemarketing", "name_it": "Telemarketing", "name_en": "Telemarketing" },
+    { "id": "dati_sanitari", "name_it": "Dati sanitari", "name_en": "Health data" },
+    { "id": "diritto_oblio", "name_it": "Diritto all'oblio", "name_en": "Right to erasure" },
+    { "id": "trasferimento_dati", "name_it": "Trasferimento dati", "name_en": "Data transfers" },
+    { "id": "valutazione_impatto", "name_it": "Valutazione d'impatto (DPIA)", "name_en": "Data protection impact assessment" },
+    { "id": "trattamento_automatizzato", "name_it": "Trattamento automatizzato", "name_en": "Automated processing" }
+  ],
+  "language": "it",
+  "schema_version": "1"
+}
