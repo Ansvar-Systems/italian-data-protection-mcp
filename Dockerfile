@@ -8,12 +8,13 @@
 # Override with GARANTE_DB_PATH for a custom location.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- Stage 1: Build TypeScript ---
+# --- Stage 1: Build TypeScript + native deps ---
 FROM node:20-slim AS builder
 
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts
+# Install ALL deps including better-sqlite3 native binding (postinstall runs)
+RUN npm ci
 COPY tsconfig.json ./
 COPY src/ src/
 RUN npm run build
@@ -25,10 +26,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV GARANTE_DB_PATH=/app/data/garante.db
 
+# Copy built artifacts AND node_modules (preserves better-sqlite3 native binding)
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-
+COPY --from=builder /app/node_modules/ node_modules/
 COPY --from=builder /app/dist/ dist/
+
+# Bake operational DB into image (provisioned by ghcr-build.yml from Release asset)
+COPY data/database.db data/garante.db
 
 # Non-root user for security
 RUN addgroup --system --gid 1001 mcp && \
